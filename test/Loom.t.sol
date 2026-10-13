@@ -2,6 +2,7 @@
 pragma solidity 0.8.26;
 
 import {Test} from "forge-std/Test.sol";
+import {Vm} from "forge-std/Vm.sol";
 import {IERC20Errors} from "@openzeppelin/contracts/interfaces/draft-IERC6093.sol";
 import {Loom} from "../src/Loom.sol";
 
@@ -15,6 +16,7 @@ contract LoomFactoryProbe {
     }
 }
 
+/// forge-config: default.fuzz.runs = 1000
 contract LoomTest is Test {
     Loom internal token;
     address internal alice = makeAddr("alice");
@@ -41,16 +43,27 @@ contract LoomTest is Test {
     }
 
     function test_ConstructorEmitsSingleMint() public {
-        vm.expectEmit(true, true, false, true);
-        emit Transfer(address(0), address(this), SUPPLY);
-        new Loom();
+        vm.recordLogs();
+        Loom deployed = new Loom();
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        assertEq(logs.length, 1, "constructor must mint exactly once");
+        assertEq(logs[0].emitter, address(deployed));
+        assertEq(logs[0].topics.length, 3);
+        assertEq(logs[0].topics[0], keccak256("Transfer(address,address,uint256)"));
+        assertEq(logs[0].topics[1], bytes32(0));
+        assertEq(logs[0].topics[2], bytes32(uint256(uint160(address(this)))));
+        assertEq(abi.decode(logs[0].data, (uint256)), SUPPLY);
+        assertEq(deployed.balanceOf(address(this)), SUPPLY);
+        assertEq(deployed.totalSupply(), SUPPLY);
     }
 
     function test_FactoryReceivesEntireSupplyAndDistributesWithoutFees() public {
         LoomFactoryProbe factory = new LoomFactoryProbe();
+        vm.prank(alice, alice);
         Loom launched = factory.deploy();
         assertEq(launched.balanceOf(address(factory)), SUPPLY);
         assertEq(launched.balanceOf(address(this)), 0);
+        assertEq(launched.balanceOf(alice), 0, "tx.origin must not receive the constructor mint");
         uint256 swarm = SUPPLY / 10;
         uint256 pool = SUPPLY * 8 / 10;
         assertTrue(factory.distribute(launched, alice, swarm));
